@@ -149,12 +149,15 @@ func (engine *Engine) Run(addr string) (err error) {
 	return
 }
 
-func (engine *Engine) handleHTTPRequest(c *Context) {
+func (c *Context) Reset() {
 	c.index = -1
+}
+
+func (engine *Engine) handleHTTPRequest(c *Context) {
+	c.Reset()
 	//t := engine.trees
 	c.handlers = engine.Handlers
 	c.Next()
-	c.index = -1
 }
 
 func (c *Context) Next() {
