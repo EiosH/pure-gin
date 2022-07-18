@@ -4,51 +4,23 @@ import (
 	"fmt"
 	"net/http"
 	"path"
-	"sync"
 )
 
 type node struct {
 	path     string
-	children []*node // child nodes, at most 1 :param style node at the end of the array
+	children []*node
+	handlers HandlersChain
+	fullPath string
+	indices  string
 }
-
-type methodTree struct {
-	method string
-	root   *node
-}
-
-type methodTrees []methodTree
 
 type HandlerFunc func(*Context)
-
-type HandlersChain []HandlerFunc
 
 type RouterGroup struct {
 	Handlers HandlersChain
 	basePath string
 	engine   *Engine
 	root     bool
-}
-
-type Engine struct {
-	RouterGroup
-	pool  sync.Pool
-	trees methodTrees
-}
-
-type Param struct {
-	Key   string
-	Value string
-}
-
-type Params []Param
-
-type Context struct {
-	engine   *Engine
-	params   *Params
-	Request  *http.Request
-	handlers HandlersChain
-	index    int
 }
 
 type IRoutes interface {
@@ -94,27 +66,6 @@ func (group *RouterGroup) GET(relativePath string, handlers ...HandlerFunc) IRou
 	return group.handle(http.MethodGet, relativePath, handlers)
 }
 
-func (trees methodTrees) get(method string) *node {
-	for _, tree := range trees {
-		if tree.method == method {
-			return tree.root
-		}
-	}
-	return nil
-}
-
-func (n *node) addRoute(path string, handlers HandlersChain) {
-	//fullPath := path
-
-	// Empty tree
-	if len(n.path) == 0 && len(n.children) == 0 {
-		//copy(n.children, &node{})
-		//n.insertChild(path, fullPath, handlers)
-		return
-	}
-
-}
-
 func (engine *Engine) addRoute(method, path string, handlers HandlersChain) {
 	root := engine.trees.get(method)
 	if root == nil {
@@ -122,13 +73,32 @@ func (engine *Engine) addRoute(method, path string, handlers HandlersChain) {
 		//root.fullPath = "/"
 		engine.trees = append(engine.trees, methodTree{method: method, root: root})
 	}
+
 	root.addRoute(path, handlers)
 }
 
+func (group *RouterGroup) calculateAbsolutePath(relativePath string) string {
+	return path.Join(group.basePath, relativePath)
+}
+
+func (group *RouterGroup) combineHandlers(handlers HandlersChain) HandlersChain {
+	mergedHandlers := make(HandlersChain, len(handlers)+len(group.Handlers))
+	copy(mergedHandlers, group.Handlers)
+	copy(mergedHandlers[len(group.Handlers):], handlers)
+	return mergedHandlers
+}
+
+func (group *RouterGroup) Group(relativePath string, handlers ...HandlerFunc) *RouterGroup {
+	return &RouterGroup{
+		Handlers: group.combineHandlers(handlers),
+		basePath: group.calculateAbsolutePath(relativePath),
+		engine:   group.engine,
+	}
+}
+
 func (group *RouterGroup) handle(httpMethod, relativePath string, handlers HandlersChain) IRoutes {
-	absolutePath := path.Join(group.basePath, relativePath)
-	copy(make(HandlersChain, len(handlers)), handlers)
-	copy(handlers, group.Handlers)
+	absolutePath := group.calculateAbsolutePath(relativePath)
+	handlers = group.combineHandlers(handlers)
 	group.engine.addRoute(httpMethod, absolutePath, handlers)
 	return group
 }
@@ -154,12 +124,26 @@ func (c *Context) Reset() {
 }
 
 func (engine *Engine) handleHTTPRequest(c *Context) {
-	c.Reset()
-	//t := engine.trees
-	c.handlers = engine.Handlers
-	c.Next()
-}
+	rPath := c.Request.URL.Path
+	httpMethod := c.Request.Method
 
+	t := engine.trees
+	for _, node := range t {
+		if node.method == httpMethod {
+			root := node.root
+			v := root.getValue(rPath)
+			if v != nil {
+
+				c.handlers = v.handlers
+				c.Next()
+			}
+
+			break
+		}
+
+	}
+
+}
 func (c *Context) Next() {
 	c.index++
 
@@ -176,6 +160,7 @@ func (c *Context) Abort() {
 
 func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	c := engine.pool.Get().(*Context)
+	c.Reset()
 	//c.writermem.reset(w)
 	c.Request = req
 	engine.handleHTTPRequest(c)
@@ -195,7 +180,7 @@ func myMiddleware1(c *Context) {
 }
 
 func myMiddleware2(c *Context) {
-	c.Abort()
+	//c.Abort()
 	fmt.Println("myMiddleware2")
 }
 
@@ -204,14 +189,17 @@ func myMiddleware3(c *Context) {
 }
 
 func main() {
-
 	r := Default()
 	r.Use(myMiddleware1)
 	r.Use(myMiddleware2)
 	r.Use(myMiddleware3)
 
-	//r.GET("/myHandler", myHandler)
-	//r.POST("/myHandler1", myHandler)
+	//api := r.Group("/group", myHandler)
+	//api.GET("/a")
+	//api.GET("/b")
 
-	r.Run(":8888")
+	r.GET("/a1", myHandler)
+	r.GET("/a2", myHandler)
+
+	r.Run(":5678")
 }
